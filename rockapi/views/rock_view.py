@@ -1,5 +1,5 @@
 from django.http import HttpResponseServerError
-from rest_framework import serializers, status
+from rest_framework import serializers, status, permissions
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 from django.contrib.auth.models import User
@@ -9,7 +9,21 @@ from rockapi.models import Rock, Type
 
 class RockView(ViewSet):
     """Rock view set"""
+    permission_classes = (permissions.AllowAny,)
+    
+    def get_permissions(self):
+        """
+        Override the get_permissions method to set permissions dynamically.
 
+        GET requests do not require a token
+        POST, PUT, DELETE require a token
+        """
+        method = self.request.method
+        if method == "GET":
+            permission_classes = [permissions.AllowAny]
+        else:
+            permission_classes = [permissions.IsAuthenticated]  # Default permission for other methods
+        return [permission() for permission in permission_classes]
 
     def create(self, request):
         """Handle POST operations
@@ -40,8 +54,18 @@ class RockView(ViewSet):
         Returns:
             Response -- JSON serialized array
         """
+       # Get query string parameter
+        owner_only = self.request.query_params.get("owner", None)
+
         try:
+            # Start with all rows
             rocks = Rock.objects.all()
+
+            # If `?owner=current` is in the URL
+            if owner_only is not None and owner_only == "current":
+                # Filter to only the current user's rocks
+                rocks = rocks.filter(user=request.auth.user)
+
             serializer = RockSerializer(rocks, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as ex:
@@ -55,18 +79,23 @@ class RockView(ViewSet):
         """
         try:
             rock = Rock.objects.get(pk=pk)
-            # Verify that the pk of the rock owner is the same pk as the authenticated user
-            if rock.user.id == request.auth.user.id:
-                rock.delete()
-                return Response(None, status=status.HTTP_204_NO_CONTENT)
-            else:
-                return Response({'message': 'You do not own that rock'}, status=status.HTTP_403_FORBIDDEN)
+            # Explicitly check if the user is authenticated
+         
+                
 
+                # Handle the case where rock.user is None (if allowed by your model)
+            if rock.user and rock.user.id == request.auth.user.id:
+                    rock.delete()
+                    return Response(None, status=status.HTTP_204_NO_CONTENT)
+            else:
+                    return Response({'message': 'You do not own that rock'}, status=status.HTTP_403_FORBIDDEN)
+        
         except Rock.DoesNotExist as ex:
             return Response({'message': ex.args[0]}, status=status.HTTP_404_NOT_FOUND)
 
         except Exception as ex:
             return Response({'message': ex.args[0]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class RockOwnerSerializer(serializers.ModelSerializer):
     """JSON serializer"""
